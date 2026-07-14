@@ -75,6 +75,7 @@ def _highlight(text: str, terms: List[str]) -> str:
     pattern = re.compile(r"\b(" + "|".join(re.escape(t) for t in unique_terms) + r")\b", re.IGNORECASE)
     return pattern.sub(lambda m: f"**{m.group(0)}**", text)
 
+
 # Empirically chosen from data/sample_docs (all-MiniLM-L6-v2 + FAISS cosine sim,
 # see EVALUATION.md): correct hits scored as low as 0.29, while clearly
 # off-topic probe queries (e.g. "chocolate cake recipe") topped out around
