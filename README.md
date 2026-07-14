@@ -31,6 +31,31 @@ command — it's easy to accidentally leak a key into logs or shell history
 that way. Without a key, "llm" mode falls back to "extractive" mode with an
 explanatory message; "extractive" mode needs no key at all.
 
+## Deployment (Dokploy)
+
+The included `Dockerfile` builds a self-contained image (bakes in the
+`all-MiniLM-L6-v2` embedding model at build time, so there's no first-request
+delay or Hugging Face dependency at runtime) and runs Streamlit headless on
+`$PORT` (defaults to `8501`).
+
+To deploy on [Dokploy](https://dokploy.com):
+
+1. Create an Application, point it at this repo, and set the build type to
+   **Dockerfile**.
+2. Set the container port to `8501` (or whatever `$PORT` you configure).
+3. Add `GEMINI_API_KEY` as an environment variable in the Dokploy dashboard
+   to enable "llm" mode — do **not** commit `.env` or bake the key into the
+   image (it's git-ignored here for that reason).
+4. Deploy. The `/_stcore/health` endpoint is used for the container
+   healthcheck.
+
+To build/run it locally first:
+
+```bash
+docker build -t rag-ai-search .
+docker run -p 8501:8501 -e GEMINI_API_KEY=your-key-here rag-ai-search
+```
+
 ## System architecture
 
 ```
