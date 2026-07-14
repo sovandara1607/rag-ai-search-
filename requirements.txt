@@ -1,0 +1,12 @@
+# Core (required to run the app as-is)
+streamlit
+numpy
+pandas
+sentence-transformers   # real embeddings (all-MiniLM-L6-v2) instead of TF-IDF
+faiss-cpu                # local vector database for similarity search
+pypdf                    # PDF document ingestion
+google-genai              # client for Google AI Studio's Gemini API, used in llm mode
+python-dotenv             # loads GEMINI_API_KEY etc. from a .env file
+
+# Dev / testing
+pytest

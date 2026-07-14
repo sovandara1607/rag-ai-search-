@@ -1,0 +1,52 @@
+# Theme: minimal dark/white — near-black background, white text, thin
+# hairline borders, flat cards (no blur/gradients), with a single small cyan
+# accent used sparingly (status dots, focus rings). Modeled after a clean
+# portfolio-site aesthetic: monochrome first, color only as a quiet accent.
+#
+# Palette:
+#   bg       #0A0A0A  page background
+#   surface  #111113  solid fallback for native widget surfaces
+#   text     #FAFAFA  primary text
+#   muted    #9CA3AF  secondary text (set in app.py CSS)
+#   border   #262626  hairline borders
+#   accent   #22D3EE  the one accent color — used sparingly
+
+[theme]
+base = "dark"
+primaryColor = "#22D3EE"
+backgroundColor = "#0A0A0A"
+secondaryBackgroundColor = "#111113"
+textColor = "#FAFAFA"
+borderColor = "#262626"
+linkColor = "#22D3EE"
+
+codeBackgroundColor = "#111113"
+codeTextColor = "#FAFAFA"
+
+redColor = "#F87171"
+blueColor = "#22D3EE"
+orangeColor = "#FACC15"
+grayColor = "#71717A"
+
+font = "'Inter':https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap"
+headingFont = "'Inter':https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap"
+codeFont = "'IBM Plex Mono':https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&display=swap"
+
+baseFontSize = 15
+baseFontWeight = 400
+headingFontWeights = [800, 700, 700, 600, 600, 600]
+linkUnderline = true
+
+baseRadius = "large"
+buttonRadius = "large"
+showWidgetBorder = true
+showSidebarBorder = false
+
+[theme.sidebar]
+backgroundColor = "#0A0A0A"
+secondaryBackgroundColor = "#111113"
+textColor = "#FAFAFA"
+borderColor = "#262626"
+primaryColor = "#22D3EE"
+codeBackgroundColor = "#111113"
+codeTextColor = "#FAFAFA"
