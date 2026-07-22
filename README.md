@@ -1,3 +1,7 @@
+---
+marp: true
+---
+
 # RAG-Based AI Search System
 
 A Retrieval-Augmented Generation search app over CS382/SEIR course lecture
@@ -57,13 +61,12 @@ docker run -p 8501:8501 -e GEMINI_API_KEY=your-key-here rag-ai-search
 ```
 
 ## System architecture
+![Alt Text](rag-search-system-architecture.png)
 
-```
-data/sample_docs/ ──▶ ingest.py ──▶ embed_store.py ──▶ embed_store.py ──▶ generate.py ──▶ app.py
-  (.txt / .pdf)      load + chunk    embed (MiniLM)     FAISS index        answer +        Streamlit
-                                                         + similarity      citations        UI
-                                                           search
-```
+*This diagram shows the LLM-generation path only. Extractive mode (this
+app's default — no API key required) skips "Augmentation" and "LLM"
+entirely: it goes straight from the retrieved/reranked chunks to a
+highlighted-snippet answer. See step 6 below.*
 
 1. **Ingest & chunk** (`rag/ingest.py`) — loads `.txt` and `.pdf` files
    (PDF text extraction via `pypdf`) and splits each document into
@@ -74,9 +77,22 @@ data/sample_docs/ ──▶ ingest.py ──▶ embed_store.py ──▶ embed_s
    into a local FAISS `IndexFlatIP` index; inner product over normalized
    vectors is equivalent to cosine similarity.
 4. **Retrieve** (`rag/embed_store.py`) — the query is embedded the same
-   way and `VectorStore.query()` returns the top-K nearest chunks by
-   cosine similarity.
-5. **Generate** (`rag/generate.py`) — retrieved chunks below a minimum
+   way and `VectorStore.query()` returns the nearest chunks by cosine
+   similarity. When reranking is on (see next step), a wider candidate
+   pool (`max(top_k * 4, 15)`) is retrieved instead of just top-K, then
+   narrowed back down after reranking.
+5. **Rerank & aggregate** (`rag/rerank.py`, optional, on by default) —
+   chunks that clear the relevance floor are re-scored with a
+   cross-encoder (`cross-encoder/ms-marco-MiniLM-L-6-v2`), which judges
+   query/chunk relevance jointly instead of comparing independent
+   embeddings. The top-K survivors are kept in cross-encoder order (their
+   original cosine score travels with them for the floor/display logic,
+   unchanged); any chunks that are adjacent, same-document neighbors among
+   those top-K are merged into a single contiguous passage. See
+   `EVALUATION.md`'s "Reranking evaluation" section for a measured
+   before/after comparison — including a documented case where reranking
+   does *not* help.
+6. **Generate** (`rag/generate.py`) — retrieved chunks below a minimum
    similarity score are dropped (`filter_relevant`); if none remain, the
    app returns a "nothing relevant found" message without calling an LLM.
    Otherwise, either `extractive_answer` (picks the most query-relevant
@@ -84,11 +100,11 @@ data/sample_docs/ ──▶ ingest.py ──▶ embed_store.py ──▶ embed_s
    no API key needed) or `llm_answer` (sends the chunks + query to Gemini
    and asks it to answer only from them, with citations) produces the
    final answer.
-6. **Interface** (`app.py`) — Streamlit UI: query box, answer panel,
+7. **Interface** (`app.py`) — Streamlit UI: query box, answer panel,
    an expandable/scored/term-highlighted sources panel, and a settings
-   sidebar (top-K, answer mode, Gemini model picker, chunk size/overlap,
-   file upload for searching your own `.txt`/`.pdf` docs alongside the
-   indexed corpus).
+   sidebar (top-K, a reranking on/off toggle, answer mode, Gemini model
+   picker, chunk size/overlap, file upload for searching your own
+   `.txt`/`.pdf` docs alongside the indexed corpus).
 
 ## Design decisions
 
@@ -119,6 +135,14 @@ data/sample_docs/ ──▶ ingest.py ──▶ embed_store.py ──▶ embed_s
   nothing. The threshold was picked by inspecting the score distribution on
   this corpus: correct hits scored as low as 0.29, while clearly off-topic
   probe queries topped out around 0.14-0.19 (see `EVALUATION.md`).
+- **Cross-encoder reranking operates on cosine score, not its own score.**
+  `rag/rerank.py`'s cross-encoder decides ranking order and which chunks
+  survive the narrowing to top-K, but the relevance floor and every
+  downstream display value still use each chunk's original cosine score.
+  This keeps the already-calibrated 0.25 floor valid without retuning, and
+  keeps `rag/generate.py` completely unaware reranking exists — it still
+  just receives a `List[Tuple[Chunk, float]]`. The cross-encoder score is
+  surfaced separately, as a secondary badge, in the sources panel.
 
 ## Project structure
 
@@ -131,9 +155,10 @@ final_project_starter/
 ├── rag/
 │   ├── ingest.py            # load + chunk documents
 │   ├── embed_store.py       # embed (sentence-transformers) + FAISS similarity search
+│   ├── rerank.py            # cross-encoder reranking + adjacent-chunk aggregation
 │   ├── generate.py          # relevance filtering + turn retrieved chunks into an answer
-│   └── evaluate.py          # hit-rate / MRR evaluation harness
-└── tests/                   # unit tests (pytest) for ingest/generate/embed_store
+│   └── evaluate.py          # hit-rate / MRR evaluation harness (baseline vs. reranked)
+└── tests/                   # unit tests (pytest) for ingest/generate/embed_store/rerank
 ```
 
 ## Evaluation
@@ -182,3 +207,10 @@ real queries.
 - **Small, static corpus.** 16 documents / ~167 chunks, indexed with an
   exact-search FAISS index. Uploading extra files at query time works but
   triggers a full rebuild of the in-memory index (no incremental indexing).
+- **Reranking is not guaranteed to help, and can amplify an existing bias.**
+  On this corpus it left hit-rate/MRR unchanged (92%, 0.92 both ways) and
+  did *not* fix the one documented retrieval miss — the cross-encoder is
+  more sensitive to fluent, well-formed phrasing than cosine similarity is,
+  which made it favor a generic placeholder chunk even more strongly over
+  noisier-but-correct real lecture content. See `EVALUATION.md`'s
+  "Reranking evaluation" section.

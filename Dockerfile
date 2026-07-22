@@ -20,9 +20,11 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Bake the embedding model into the image so the container doesn't need to
-# reach Hugging Face on first request (faster, more reliable cold start).
+# Bake the embedding + reranking models into the image so the container
+# doesn't need to reach Hugging Face on first request (faster, more
+# reliable cold start).
 RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('all-MiniLM-L6-v2')"
+RUN python -c "from sentence_transformers import CrossEncoder; CrossEncoder('cross-encoder/ms-marco-MiniLM-L-6-v2')"
 
 COPY . .
 

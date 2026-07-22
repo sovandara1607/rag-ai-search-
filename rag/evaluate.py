@@ -13,9 +13,12 @@ import os
 
 from .ingest import load_documents, build_chunk_records
 from .embed_store import VectorStore
+from .generate import filter_relevant
+from .rerank import rerank_and_aggregate
 
 DATA_FOLDER = os.path.join(os.path.dirname(__file__), "..", "data", "sample_docs")
 TOP_K = 3
+CANDIDATE_K = 15  # wider pool retrieved before reranking narrows back to TOP_K
 
 # "expected_docs" lists every doc title that would be a correct source for the query.
 # Most queries have one; a few list two where an old placeholder sample doc and a real
@@ -50,19 +53,26 @@ TEST_QUERIES = [
 ]
 
 
-def run_evaluation():
-    docs = load_documents(DATA_FOLDER)
-    chunks = build_chunk_records(docs)
-    store = VectorStore()
-    store.build(chunks)
+def _retrieve(store, query, use_rerank):
+    """Return top-TOP_K (chunk, score) pairs, either straight from FAISS
+    cosine similarity or narrowed down via cross-encoder reranking."""
+    if not use_rerank:
+        return store.query(query, top_k=TOP_K)
+    candidates = store.query(query, top_k=CANDIDATE_K)
+    floor_passed = filter_relevant(candidates)
+    ranked = rerank_and_aggregate(query, floor_passed, TOP_K) if floor_passed else []
+    return [(rc.chunk, rc.cosine_score) for rc in ranked]
 
+
+def run_evaluation(store, use_rerank: bool, label: str):
     hits = 0
     reciprocal_ranks = []
+    print(f"\n=== {label} ===")
     print(f"{'Query':<75} {'Rank':<6} {'Top score':<10}")
     print("-" * 95)
 
     for case in TEST_QUERIES:
-        retrieved = store.query(case["query"], top_k=TOP_K)
+        retrieved = _retrieve(store, case["query"], use_rerank)
         doc_titles = [chunk.doc_title for chunk, _ in retrieved]
         rank = next(
             (i + 1 for i, title in enumerate(doc_titles) if title in case["expected_docs"]),
@@ -84,7 +94,19 @@ def run_evaluation():
     print("-" * 95)
     print(f"Hit rate (top-{TOP_K}): {hit_rate:.0%}  ({hits}/{len(TEST_QUERIES)})")
     print(f"Mean reciprocal rank: {mrr:.2f}")
+    return hit_rate, mrr
 
 
 if __name__ == "__main__":
-    run_evaluation()
+    docs = load_documents(DATA_FOLDER)
+    chunks = build_chunk_records(docs)
+    store = VectorStore()
+    store.build(chunks)
+
+    baseline = run_evaluation(store, use_rerank=False, label="Baseline (cosine top-k)")
+    reranked = run_evaluation(store, use_rerank=True, label="Reranked (cross-encoder)")
+
+    print("\n=== Summary ===")
+    print(f"{'':<25} {'Hit rate':<12} {'MRR':<6}")
+    print(f"{'Baseline':<25} {baseline[0]:<12.0%} {baseline[1]:<6.2f}")
+    print(f"{'Reranked':<25} {reranked[0]:<12.0%} {reranked[1]:<6.2f}")

@@ -7,7 +7,9 @@ lecture PDFs plus 4 leftover placeholder `.txt` samples from the starter —
 checks whether an acceptable source document appears in the top-3 retrieved
 chunks, and reports hit rate + mean reciprocal rank (MRR). A few queries list
 two acceptable source docs where an old placeholder sample and a real lecture
-genuinely cover the same topic.
+genuinely cover the same topic. It runs the suite twice: once against plain
+cosine top-k, once through the cross-encoder reranking + aggregation step in
+`rag/rerank.py` (see "Reranking evaluation" below).
 
 ## Results (embeddings backend: `all-MiniLM-L6-v2` + FAISS, chunk_size=80, overlap=20, 16 docs / 167 chunks)
 
@@ -69,6 +71,59 @@ demonstration of that effect; removing `rag_systems.txt` /
 `recommender_systems.txt` / `vector_databases.txt` would likely fix this miss
 and is worth trying via a quick `rm` if a cleaner corpus is wanted later.
 
+## Reranking evaluation
+
+`rag/rerank.py` adds a cross-encoder (`cross-encoder/ms-marco-MiniLM-L-6-v2`)
+reranking + adjacent-chunk-aggregation step: retrieve a wider candidate pool
+(15 chunks) by cosine similarity, drop anything below the relevance floor,
+re-score the survivors with the cross-encoder, and keep the new top-3.
+
+| | Hit rate (top-3) | MRR |
+|---|---|---|
+| Baseline (cosine top-k) | 92% (12/13) | 0.92 |
+| Reranked (cross-encoder) | 92% (12/13) | 0.92 |
+
+No change in either metric — and, notably, **reranking does not fix the
+"advanced RAG techniques" miss above**. Inspecting the reranked scores for
+that query explains why:
+
+```
+cos=0.513  rerank=0.925  Rag Systems (placeholder)       "RAG systems combine a retrieval step..."
+cos=0.607  rerank=0.578  Rag Systems (placeholder)       "...generates an answer grounded in the retrieved text..."
+cos=0.496  rerank=0.394  SEIR Week 9 - RAG Architecture   "...THE OPEN-BOOK TEST ANALOGY..."
+cos=0.479  rerank=0.163  CS382-Week11 Advanced RAG        "...SIMPLE RAG VS. ADVANCED RAG..."
+```
+
+The cross-encoder *widens* the gap in favor of the generic placeholder text
+instead of closing it. `ms-marco-MiniLM-L-6-v2` is trained on fluent web
+passage/query pairs, and the placeholder `rag_systems.txt` chunk reads like a
+clean, well-formed definition of RAG — exactly what that model was trained
+to reward. The real lecture chunk with the correct answer
+(`"SIMPLE RAG VS. ADVANCED RAG"`) is choppy, fragment-heavy slide text
+extracted by `pypdf`, and the fluency-sensitive cross-encoder scores it even
+*worse*, proportionally, than plain cosine similarity did.
+
+**Takeaway: reranking is not a strict improvement over cosine similarity —
+it changes *what kind of relevance* gets rewarded** (fluent, well-formed
+phrasing vs. general topical/semantic similarity). When a corpus's noisy but
+correct content competes against clean, generic-but-less-specific content, a
+fluency-sensitive reranker can make that particular failure mode *worse*,
+not better. The "leftover placeholder docs can outrank more specific real
+content" issue identified above turns out to be robust to reranking, not
+just a cosine-similarity quirk.
+
+On other queries in the suite, reranking mostly reorders which chunk *within*
+an already-correct document scores highest (e.g. the top chunk under "How do
+you evaluate search quality...?" changes from cosine 0.643 to a different
+chunk at cosine 0.570, both from the correct document) without changing
+which document wins — consistent with a corpus where baseline cosine
+retrieval was already strong (92% hit rate) and there's limited headroom for
+a reranker to demonstrate a clear win. This is a genuine negative result for
+this corpus, not a bug: see `tests/test_rerank.py` for evidence the
+reranking logic itself works correctly (it does reorder a synthetic
+obviously-irrelevant-vs-relevant pair correctly) — it's this specific
+corpus's noisy-vs-fluent tradeoff that it doesn't help with.
+
 ## Answer quality (generation, `llm` mode via Gemini)
 
 The retrieval table above only measures whether the right document showed up
@@ -121,3 +176,10 @@ end-to-end through `generate_answer(..., mode="llm")` (Gemini
   retrieval pass; a question that requires combining facts from two unrelated
   parts of the corpus that don't share vocabulary (so both wouldn't be
   retrieved together) would not be answered completely.
+- **Reranking doesn't always help, and can amplify an existing failure
+  mode.** See "Reranking evaluation" above: the cross-encoder is more
+  sensitive to fluent, well-formed phrasing than cosine similarity is, which
+  made it favor a generic placeholder chunk *more* strongly than cosine did,
+  over noisier-but-correct real lecture content. Reranking is on by default
+  in the app because it's neutral-to-positive on this corpus overall, not
+  because it's guaranteed to improve any given query.

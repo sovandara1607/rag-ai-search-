@@ -2,7 +2,7 @@
 streamlit
 numpy
 pandas
-sentence-transformers   # real embeddings (all-MiniLM-L6-v2) instead of TF-IDF
+sentence-transformers   # real embeddings (all-MiniLM-L6-v2) + cross-encoder reranking (ms-marco-MiniLM-L-6-v2)
 faiss-cpu                # local vector database for similarity search
 pypdf                    # PDF document ingestion
 google-genai              # client for Google AI Studio's Gemini API, used in llm mode

@@ -22,6 +22,7 @@ from dotenv import load_dotenv
 from rag.ingest import load_documents, build_chunk_records, derive_title, read_uploaded_file
 from rag.embed_store import VectorStore
 from rag.generate import generate_answer, filter_relevant, MIN_SIMILARITY, DEFAULT_GEMINI_MODEL
+from rag.rerank import rerank_and_aggregate
 
 load_dotenv()
 
@@ -282,6 +283,18 @@ st.html("""
     text-align: right;
   }
 
+  .rerank-badge {
+    display: inline-block;
+    font-size: 0.68rem;
+    letter-spacing: 0.03em;
+    color: #A78BFA;
+    background: rgba(167,139,250,0.12);
+    border: 1px solid rgba(167,139,250,0.35);
+    border-radius: 999px;
+    padding: 0.12rem 0.55rem;
+    margin-bottom: 0.6rem;
+  }
+
   mark {
     background: rgba(34,211,238,0.16);
     color: #67E8F9;
@@ -337,13 +350,27 @@ def relevance_meter_html(score: float, floor: float) -> str:
     """
 
 
-def call_number_html(doc_title: str, chunk_index: int, total_in_doc: int) -> str:
+def passage_label(chunk_id: str, total_in_doc: int) -> str:
+    """Turn a chunk_id's trailing index (`::3`) or merged range (`::3-4`,
+    from aggregate_adjacent) into a 1-indexed display label."""
+    suffix = chunk_id.rsplit("::", 1)[-1]
+    if "-" in suffix:
+        start, end = (int(n) for n in suffix.split("-", 1))
+        return f"passages {start + 1}–{end + 1} of {total_in_doc}"
+    return f"passage {int(suffix) + 1} of {total_in_doc}"
+
+
+def call_number_html(doc_title: str, label: str) -> str:
     return (
         f'<div class="call-number">'
         f'<span class="doc">{html.escape(doc_title)}</span>'
-        f'<span class="chunk"> &nbsp;·&nbsp; passage {chunk_index + 1} of {total_in_doc}</span>'
+        f'<span class="chunk"> &nbsp;·&nbsp; {label}</span>'
         f"</div>"
     )
+
+
+def rerank_badge_html(score: float) -> str:
+    return f'<div class="rerank-badge">reranked &middot; cross-encoder {score:.2f}</div>'
 
 
 with st.sidebar:
@@ -351,6 +378,13 @@ with st.sidebar:
     st.header("Catalog settings")
     top_k = st.slider("Number of chunks to retrieve", min_value=1, max_value=10, value=3)
     st.caption(f"Retrieving top **{top_k}** passages per search.")
+    use_rerank = st.checkbox(
+        "Rerank with cross-encoder",
+        value=True,
+        help="Retrieves a wider candidate pool and reorders it with a cross-encoder "
+        "(ms-marco-MiniLM-L-6-v2) before generation — usually more accurate than cosine "
+        "similarity alone, at the cost of a bit of latency.",
+    )
     st.caption("Answer mode and model are chosen in the search box below.")
 
     with st.expander("Chunking settings", icon=":material/tune:"):
@@ -447,9 +481,19 @@ with st.container(key="query-slip"):
 
 if search_clicked and query.strip():
     start = time.perf_counter()
-    retrieved = store.query(query, top_k=top_k)
-    relevant = filter_relevant(retrieved)
-    answer = generate_answer(query, retrieved, mode=mode, model=gemini_model)
+    rerank_scores = {}
+    if use_rerank:
+        candidate_k = min(max(top_k * 4, 15), len(chunks))
+        candidates = store.query(query, top_k=candidate_k)
+        floor_passed = filter_relevant(candidates)
+        ranked = rerank_and_aggregate(query, floor_passed, top_k) if floor_passed else []
+        relevant = [(rc.chunk, rc.cosine_score) for rc in ranked]
+        rerank_scores = {rc.chunk.chunk_id: rc.rerank_score for rc in ranked}
+        answer = generate_answer(query, relevant, mode=mode, model=gemini_model)
+    else:
+        retrieved = store.query(query, top_k=top_k)
+        relevant = filter_relevant(retrieved)
+        answer = generate_answer(query, retrieved, mode=mode, model=gemini_model)
     elapsed_ms = (time.perf_counter() - start) * 1000
 
     with st.container(key="answer-card"):
@@ -465,10 +509,11 @@ if search_clicked and query.strip():
         st.info(f"No retrieved chunk cleared the relevance floor (similarity ≥ {MIN_SIMILARITY:.2f}).")
     else:
         for i, (chunk, score) in enumerate(relevant):
-            chunk_index = int(chunk.chunk_id.rsplit("::", 1)[-1])
-            total_in_doc = chunks_per_doc.get(chunk.doc_title, chunk_index + 1)
+            total_in_doc = chunks_per_doc.get(chunk.doc_title, 1)
             with st.container(key=f"src-{i}"):
-                st.markdown(call_number_html(chunk.doc_title, chunk_index, total_in_doc), unsafe_allow_html=True)
+                st.markdown(call_number_html(chunk.doc_title, passage_label(chunk.chunk_id, total_in_doc)), unsafe_allow_html=True)
+                if chunk.chunk_id in rerank_scores:
+                    st.markdown(rerank_badge_html(rerank_scores[chunk.chunk_id]), unsafe_allow_html=True)
                 st.markdown(relevance_meter_html(score, MIN_SIMILARITY), unsafe_allow_html=True)
                 with st.expander("Read excerpt", icon=":material/description:"):
                     st.markdown(highlight_terms(chunk.text, query), unsafe_allow_html=True)
